@@ -18,7 +18,7 @@ def build_info(file_name, meta_features):
 
 def extract_feature(task):
     """Extracts a feature from an specific task info"""
-    info_folder = Path('results/95_datasets_info') / task
+    info_folder = Path('results/datasets_info') / task
     data_dict = []
     for fn in info_folder.glob('*.json'):
         info = json.load(open(fn, 'r+'))
@@ -64,12 +64,15 @@ def plot_scatterplot(data, plot_folder):
 
 def plot_lineplot(data, plot_folder):
     """Line plot of #instances, #features, #classes - dataset id (atm style)"""
-    fig, axs = plt.subplots(nrows=3)
+    fig, axs = plt.subplots(nrows=3, figsize=(9, 7))
     datasets_number = range(len(data))
     sns.lineplot(data=data, x=datasets_number, y='number of samples', ax=axs[0])
+    axs[0].set_ylabel('Número de Instancias')
     sns.lineplot(data=data, x=datasets_number, y='input dimensionality', ax=axs[1])
+    axs[1].set_ylabel('Número de Características')
     sns.lineplot(data=data, x=datasets_number, y='number of classes', ax=axs[2])
-    plt.savefig(plot_folder / f'lineplot.pdf')
+    axs[2].set_ylabel('Número de Clases')
+    plt.savefig(plot_folder / 'lineplot.pdf')
     plt.close()
 
 
@@ -97,10 +100,10 @@ def main():
     plot_lineplot(df, plt_folder)
 
     # Plots numerical values
-    plot_values(df, numerical_features, plt_folder, 'numerical')
-
-    # Plots categorical values
-    plot_values(df, categorical_features, plt_folder, 'categorical')
+    # plot_values(df, numerical_features, plt_folder, 'numerical')
+    #
+    # # Plots categorical values
+    # plot_values(df, categorical_features, plt_folder, 'categorical')
 
 
 if __name__ == '__main__':
