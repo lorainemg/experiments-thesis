@@ -5,6 +5,7 @@ from utils import get_plot_folder
 import matplotlib.pyplot as plt
 import pandas as pd
 import seaborn as sns
+import numpy as np
 
 
 def build_info(file_name, meta_features):
@@ -70,7 +71,8 @@ def plot_lineplot(data, plot_folder):
     axs[0].set_ylabel('Número de Instancias')
     sns.lineplot(data=data, x=datasets_number, y='input dimensionality', ax=axs[1])
     axs[1].set_ylabel('Número de Características')
-    sns.lineplot(data=data, x=datasets_number, y='number of classes', ax=axs[2])
+    logaritmic = np.log2(data['number of classes'])
+    sns.lineplot(x=datasets_number, y=logaritmic, ax=axs[2])
     axs[2].set_ylabel('Número de Clases')
     plt.savefig(plot_folder / 'lineplot.pdf')
     plt.close()

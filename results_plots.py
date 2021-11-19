@@ -34,8 +34,8 @@ def build_info(file_name, info, i, datasets: dict):
 
     # performance = [p if p > 0 else 0 for p in info['scores']]
     median = np.mean(datasets[file_name])
-    variance = np.std(datasets[file_name])
-    data['best_fn_normalize'] = (data['best_fn'] - median) / variance
+    std = np.std(datasets[file_name])
+    data['best_fn_normalize'] = (data['best_fn'] - median) / std
     return data
 
 
@@ -128,12 +128,15 @@ def plot_multiple_boxplot(data, prop_name, folder):
     """Plots a boxplot of multiple strategies"""
     label_name = _get_plot_name(prop_name)
     plt.figure(prop_name).suptitle(label_name)
-    g = sns.boxplot(data=data, x='i', y=prop_name, hue='i', dodge=False) #, showfliers=False)
+    if prop_name == 'best_fn_normalize':
+        # not show outliers for normalize data
+        g = sns.boxplot(data=data, x='i', y=prop_name, hue='i', dodge=False, showfliers=False)
+    else:
+        g = sns.boxplot(data=data, x='i', y=prop_name, hue='i', dodge=False)
     plt.legend(title='Estrategias', loc='best')
     g.set(xticklabels=[])
     g.set(xlabel=None)
     g.set(ylabel=label_name)
-    plt.ylim([0, 2.7])
     plt.savefig(f'{folder}.pdf', format='pdf')
     plt.close()
 
