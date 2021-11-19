@@ -13,10 +13,13 @@ import re
 
 name_for_properties = {
     'failed_pipelines': 'Flujos de Algoritmos Inválidos',
-    'best_fn': 'Resultados de Rendimiento'
+    'best_fn': 'Resultados de Rendimiento',
+    'best_fn_normalize': 'Z-Score'
 }
 
-def build_info(file_name, info, i):
+
+def build_info(file_name, info, i, datasets: dict):
+    """The datasets results are processed, and stored in a pandas dataframe"""
     data = {key: value for key, value in info.items() if not isinstance(value, list)}
     data['failed_pipelines'] = min(data['failed_pipelines'] / len(info['scores']), 1)
     data['dataset'] = file_name
@@ -28,11 +31,45 @@ def build_info(file_name, info, i):
             max_idx = None
         data['max_idx'] = max_idx
     data['max_idx'] = data['max_idx'] / len(info['scores'])
+
+    # performance = [p if p > 0 else 0 for p in info['scores']]
+    median = np.mean(datasets[file_name])
+    variance = np.std(datasets[file_name])
+    data['best_fn_normalize'] = (data['best_fn'] - median) / variance
     return data
 
 
-def extract_scores(metalearner_path: Path):
-    "Extracts a feature from an especific task info"
+def get_performances(result_folder: Path, datasets_folder: Path, meta_learners: list):
+    """Get the list of performance of all the datasets in all the experiments"""
+    datasets_performance = {}
+    _get_performance(datasets_folder, re.compile('(\d+)\.json'), datasets_performance, 'meta_targets')
+    file_re = re.compile('\w+_(\d+)_(\d+)\.json')
+
+    for meta_learner in meta_learners:
+        p = result_folder / meta_learner
+        _get_performance(p, file_re, datasets_performance, 'scores')
+
+    return datasets_performance
+
+
+def _get_performance(folder: Path, name_re: re.Pattern, dataset_performance: dict, scores_key: str):
+    """Gets the performance of all the dataset of one experiment"""
+    for fn in folder.glob('*.json'):
+        info = json.load(open(fn, 'r+'))
+        m = name_re.match(fn.name)
+        if m is None:
+            continue
+        dataset_name = m.group(1)
+        performance = [p if p > 0 else 0 for p in info[scores_key]]
+        try:
+            dataset_performance[dataset_name].extend(performance)
+        except KeyError:
+            dataset_performance[dataset_name] = performance
+    return dataset_performance
+
+
+def extract_scores(metalearner_path: Path, datasets):
+    """Extracts a feature from an especific task info"""
     data_dict = {}
     file_re = re.compile('\w+_(\d+)_(\d+)\.json')
     for fn in metalearner_path.glob('*.json'):
@@ -42,14 +79,15 @@ def extract_scores(metalearner_path: Path):
         iteration = int(m.group(2))
 
         try:
-            data_dict[iteration].append(build_info(dataset_name, info, iteration))
+            data_dict[iteration].append(build_info(dataset_name, info, iteration, datasets))
         except KeyError:
-            data_dict[iteration] = [build_info(dataset_name, info, iteration)]
+            data_dict[iteration] = [build_info(dataset_name, info, iteration, datasets)]
 
     return [pd.DataFrame(data) for data in data_dict.values()]
 
 
 def build_average_dataframe(dfs, metalearner):
+    """Builds an average dataframe in case consecutive runs are executed"""
     datasets = {}
     for df in dfs:
         for _, row in df.iterrows():
@@ -72,6 +110,7 @@ def build_average_dataframe(dfs, metalearner):
 
 
 def plot_boxplot(data, prop_name, folder):
+    """Plots a boxplot of a property of the data frame and stores the picture in a given folder"""
     plt.figure(prop_name).suptitle(prop_name)
     sns.boxplot(data=data, y=prop_name)
     plt.savefig(f'{folder}.pdf', format='pdf')
@@ -86,18 +125,21 @@ def _get_plot_name(prop_name):
 
 
 def plot_multiple_boxplot(data, prop_name, folder):
+    """Plots a boxplot of multiple strategies"""
     label_name = _get_plot_name(prop_name)
     plt.figure(prop_name).suptitle(label_name)
-    g = sns.boxplot(data=data, x='i', y=prop_name, hue='i', dodge=False)
+    g = sns.boxplot(data=data, x='i', y=prop_name, hue='i', dodge=False) #, showfliers=False)
     plt.legend(title='Estrategias', loc='best')
     g.set(xticklabels=[])
     g.set(xlabel=None)
     g.set(ylabel=label_name)
+    plt.ylim([0, 2.7])
     plt.savefig(f'{folder}.pdf', format='pdf')
     plt.close()
 
 
 def plot_histogram(data, metalearners, folder):
+    """Plots a histogram to include different performance of a list of strategies"""
     autogoal = metalearners[0]
     fig, axs = plt.subplots(nrows=len(metalearners)-1)
     for i, metalearner in enumerate(metalearners[1:]):
@@ -110,11 +152,16 @@ def plot_histogram(data, metalearners, folder):
     plt.close()
 
 
-def plot_results(metalearners, metalearners_path: Path, plot_folder: Path):
+def plot_results(metalearners, metalearners_path: Path, plot_folder: Path, datasets_folder: Path):
+    """
+    Main function that plots the results of a set of meta-learners stored in a given path.
+    The plots are stored in a given folder, and the folder where the dataset info is stored is also needed
+    """
     avg_results = []
+    datasets = get_performances(metalearners_path, datasets_folder, metalearners)
     for j, metalearner in enumerate(metalearners):
         metalearner_folder = get_plot_folder(plot_folder / metalearner)
-        data = extract_scores(metalearners_path / metalearner)
+        data = extract_scores(metalearners_path / metalearner, datasets)
         avg = build_average_dataframe(data, metalearner)
         data.append(avg)
         avg_results.append(avg)
@@ -136,16 +183,24 @@ def plot_results(metalearners, metalearners_path: Path, plot_folder: Path):
 
     plot_histogram(df, metalearners, plot_folder)
 
-    dfs = build_performance_info(metalearners, metalearners_path)
+    dfs = build_performance_info(metalearners, metalearners_path, normalize=False)
     plotting_performance(dfs, plot_folder / 'performance')
 
-    dfs = build_average_ranking(dfs)
-    plotting_performance(dfs, plot_folder / 'ranking')
+    # dfs = build_average_ranking(dfs)
+    # plotting_performance(dfs, plot_folder / 'ranking')
+
+    dfs = build_performance_info(metalearners, metalearners_path, normalize=True)
+    plotting_performance(dfs, plot_folder / 'normalize_performance')
+
+
+def normalize_dataset(performance: list, variance: float, median: float):
+    """Normalizes the performance obtain in a given dataset"""
+    return [(p - median) / variance for p in performance]
 
 
 def fix_performance_info(performance: list):
     new_performance = [performance[0]]
-    for p in performance:
+    for p in performance[1:]:
         if p > new_performance[-1]:
             new_performance.append(p)
         else:
@@ -153,7 +208,8 @@ def fix_performance_info(performance: list):
     return new_performance
 
 
-def build_performance_info(metalearners, metalearners_path: Path):
+def build_performance_info(metalearners, metalearners_path: Path, normalize=False):
+    """Extracts the performance info of the given strategies, and a pandas dataframe is built"""
     dataframes = {}
     for metalearner in metalearners:
         data_dict = {'i': [], metalearner: []}
@@ -163,11 +219,16 @@ def build_performance_info(metalearners, metalearners_path: Path):
 
             # performance = info['scores']
             #
+
             performance = [p if p > 0 else 0 for p in info['scores']]
-            # performance = [p if p > 0 else 0 for p in info['scores']]
             if len(performance) == 0:
                 continue
+            if normalize:
+                median = np.mean(performance)
+                var = np.var(performance)
+                performance = normalize_dataset(performance, var, median)
             performance = fix_performance_info(performance)
+
             data_dict[metalearner].extend(performance)
             data_dict['i'].extend(range(len(performance)))
         dataframes[metalearner] = pd.DataFrame(data_dict)
@@ -175,6 +236,7 @@ def build_performance_info(metalearners, metalearners_path: Path):
 
 
 def build_average_ranking(dataframes: Dict[str, pd.DataFrame]):
+    """Builds a ranking with the dataframe performance, a dataframe is returned with this rankings"""
     dataframes_rank = {}
     data_dict = {metalearner: {'i': [], metalearner: []} for metalearner in dataframes.keys()}
     for idx in range(200):
@@ -209,6 +271,7 @@ def build_average_ranking(dataframes: Dict[str, pd.DataFrame]):
 
 
 def build_ranking(metalearners: List[str], data: pd.DataFrame):
+    """Builds a ranking with the best performance info"""
     datasets = len(data[data['i'] == 'autogoal']['best_fn'])
     ranking = {metalearner: [] for metalearner in metalearners}
     for d in range(datasets):
@@ -231,8 +294,11 @@ def build_ranking(metalearners: List[str], data: pd.DataFrame):
     return pd.DataFrame(data)
 
 
-
 def plotting_performance(data, folder):
+    """
+    Helper function that plots the performance of the given strategies
+    results are stored in the given folder
+    """
     fig = plt.figure()
     for metalearner, df in data.items():
         sns.lineplot(data=df, x='i', y=metalearner)
@@ -247,39 +313,10 @@ def plotting_performance(data, folder):
 
 
 def main():
-    # plot_folder = get_plot_folder('plots/results/l1 distance')
-    # metalearners = ['autogoal', 'nn_learner_aggregated', 'nn_learner_simple', 'xgb_metalearner']
-    # plot_results(metalearners, Path('results/l1 distance/results'), plot_folder)
-
-    # plot_folder = get_plot_folder('plots/results/l2 distance')
-    # metalearners = ['autogoal', 'nn_learner_aggregated', 'nn_metalearner_simple', 'xgb_metalearner']
-    # plot_results(metalearners, Path('results/l2 distance/results'), plot_folder)
-
-    # plot_folder = get_plot_folder('plots/results/xgb_metalearner_v2')
-    # metalearners = ['autogoal', 'xgb_metalearner_v2',
-    #                 'nn_learner_aggregated_l1', 'nn_learner_simple_l1', 'xgb_metalearner_l1',
-    #                 'nn_learner_aggregated_l2', 'nn_metalearner_simple_l2', 'xgb_metalearner_l2']
-    # plot_results(metalearners, Path('results/xgb_metalearner_v2/results'), plot_folder)
-
-    #plot_folder = get_plot_folder('plots/results/paper')
-    #metalearners = ['Autogoal', 'Vecinos Cercanos Simple',
-    #                'Vecinos Cercanos Ponderado', 'XGBRanker']
-    #plot_results(metalearners, Path('results/paper/results'), plot_folder)
-
-    # plot_folder = get_plot_folder('plots/results/new_paper')
-    # metalearners = ['Autogoal', 'Vecinos Cercanos Simple',
-    #                 'Vecinos Cercanos Ponderado', 'XGBRanker']
-    # plot_results(metalearners, Path('results/new paperr/results'), plot_folder)
-
-    # plot_folder = get_plot_folder('plots/results/new_paper_performance')
-    # metalearners = ['Autogoal', 'Vecinos Cercanos Simple',
-    #                 'Vecinos Cercanos Ponderado', 'XGBRanker']
-    # plot_performance(metalearners, Path('results/new paperr/results'), plot_folder)
-
     plot_folder = get_plot_folder('plots/results/server')
-    metalearners = ['Autogoal', 'Vecinos Cercanos Simple',
+    metalearners = ['AutoGOAL', 'Vecinos Cercanos Simple',
                     'Vecinos Cercanos Ponderado', 'XGBRanker']
-    plot_results(metalearners, Path('results/server/results'), plot_folder)
+    plot_results(metalearners, Path('results/server/results'), plot_folder, Path('results/datasets_info/Classification'))
 
 
 if __name__ == '__main__':
